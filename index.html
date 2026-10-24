@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="테트리스">
+<meta name="theme-color" content="#0f1220">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+<title>테트리스</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
+  body {
+    background: #0f1220; color: #e6e8f0; font-family: -apple-system, "Malgun Gothic", sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none;
+  }
+  .top { display: flex; gap: 8px; width: 100%; max-width: 480px; padding: 8px 8px 6px; align-items: stretch; }
+  .mini { background: #161a2e; border: 1px solid #2c3355; border-radius: 6px; padding: 4px; text-align: center; }
+  .mini h3 { margin: 0; font-size: 10px; color: #8a92b8; font-weight: normal; }
+  .stats { flex: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .stat { font-size: 18px; font-weight: bold; margin-top: 2px; }
+  .btn-pause {
+    background: #161a2e; border: 1px solid #2c3355; border-radius: 6px; color: #e6e8f0;
+    font-size: 18px; width: 44px;
+  }
+  .main { flex: 1; display: flex; gap: 8px; align-items: flex-start; justify-content: center; min-height: 0; padding: 0 8px; }
+  .board { position: relative; }
+  #game { background: #161a2e; border: 2px solid #2c3355; border-radius: 6px; display: block; }
+  .next-col { display: flex; flex-direction: column; gap: 8px; }
+  #overlay {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(10,12,24,.85); border-radius: 6px; text-align: center; padding: 10px;
+  }
+  #overlay h2 { margin: 0 0 10px; font-size: 26px; }
+  #overlay p { margin: 4px 0; color: #a9b0d0; font-size: 14px; }
+  #overlay .go {
+    margin-top: 14px; padding: 12px 28px; font-size: 18px; border: 0; border-radius: 8px;
+    background: #4a7cf0; color: #fff; font-weight: bold;
+  }
+  .controls {
+    width: 100%; max-width: 480px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px;
+    padding: 10px 8px 12px;
+  }
+  .controls button {
+    height: 62px; border: 1px solid #2c3355; border-radius: 12px; background: #1c2140; color: #e6e8f0;
+    font-size: 24px; font-weight: bold;
+  }
+  .controls button.active { background: #2f3870; }
+  .controls .small { font-size: 14px; }
+  .hint { font-size: 11px; color: #6c7499; text-align: center; padding-bottom: 4px; }
+  @media (hover: hover) and (pointer: fine) { .controls { display: none; } }
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="mini"><h3>HOLD</h3><canvas id="hold" width="72" height="48"></canvas></div>
+  <div class="stats">
+    <div class="mini"><h3>점수</h3><div class="stat" id="score">0</div></div>
+    <div class="mini"><h3>줄</h3><div class="stat" id="lines">0</div></div>
+    <div class="mini"><h3>레벨</h3><div class="stat" id="level">1</div></div>
+  </div>
+  <button class="btn-pause" id="pauseBtn">❚❚</button>
+</div>
+
+<div class="main" id="main">
+  <div class="board">
+    <canvas id="game"></canvas>
+    <div id="overlay">
+      <h2>테트리스</h2>
+      <p>탭: 회전 · 좌우 스와이프: 이동</p>
+      <p>아래로 빠르게 스와이프: 하드 드롭</p>
+      <button class="go" id="startBtn">시작</button>
+    </div>
+  </div>
+  <div class="next-col">
+    <div class="mini"><h3>NEXT</h3><canvas id="next" width="72" height="150"></canvas></div>
+  </div>
+</div>
+
+<div class="controls">
+  <button data-act="left">◀</button>
+  <button data-act="down">▼</button>
+  <button data-act="right">▶</button>
+  <button data-act="rotate">↻</button>
+  <button data-act="drop" class="small">DROP</button>
+  <button data-act="hold" class="small" style="grid-column: span 2">HOLD</button>
+  <button data-act="rotateL" class="small" style="grid-column: span 3">↺ 반대 회전</button>
+</div>
+
+<script>
+const COLS = 10, ROWS = 20;
+let SIZE = 30;
+const cvs = document.getElementById('game'), ctx = cvs.getContext('2d');
+const holdCvs = document.getElementById('hold'), holdCtx = holdCvs.getContext('2d');
+const nextCvs = document.getElementById('next'), nextCtx = nextCvs.getContext('2d');
+const overlay = document.getElementById('overlay');
+
+const SHAPES = {
+  I: [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+  J: [[1,0,0],[1,1,1],[0,0,0]],
+  L: [[0,0,1],[1,1,1],[0,0,0]],
+  O: [[1,1],[1,1]],
+  S: [[0,1,1],[1,1,0],[0,0,0]],
+  T: [[0,1,0],[1,1,1],[0,0,0]],
+  Z: [[1,1,0],[0,1,1],[0,0,0]],
+};
+const COLORS = { I:'#4dd8e8', J:'#4a7cf0', L:'#f0a040', O:'#f0d040', S:'#5cd86a', T:'#b060e8', Z:'#f05060' };
+const LINE_SCORE = [0, 100, 300, 500, 800];
+
+let board, cur, bag, queue, holdType, canHold, score, lines, level;
+let dropTimer, lastTime, running = false, paused = false, over = false;
+let best = +localStorage.getItem('tetris-best') || 0;
+
+// ---------- 화면 크기 맞추기 ----------
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const main = document.getElementById('main');
+  const availH = main.clientHeight - 4;
+  const availW = window.innerWidth - 16 - 8 - 82;
+  SIZE = Math.max(14, Math.floor(Math.min(availH / ROWS, availW / COLS)));
+  for (const [c, w, h] of [[cvs, COLS * SIZE, ROWS * SIZE], [holdCvs, 72, 48], [nextCvs, 72, 150]]) {
+    c.style.width = w + 'px'; c.style.height = h + 'px';
+    c.width = w * dpr; c.height = h * dpr;
+    c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  if (board) draw();
+}
+window.addEventListener('resize', resize);
+
+// ---------- 게임 로직 ----------
+function newBoard() { return Array.from({length: ROWS}, () => Array(COLS).fill(null)); }
+
+function nextFromBag() {
+  if (!bag.length) {
+    bag = Object.keys(SHAPES);
+    for (let i = bag.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [bag[i], bag[j]] = [bag[j], bag[i]];
+    }
+  }
+  return bag.pop();
+}
+
+function makePiece(type) {
+  const m = SHAPES[type].map(r => r.slice());
+  return { type, m, x: Math.floor((COLS - m[0].length) / 2), y: type === 'I' ? -1 : 0 };
+}
+
+function spawn(type) {
+  cur = makePiece(type || queue.shift());
+  if (!type) { queue.push(nextFromBag()); canHold = true; }
+  if (collide(cur.m, cur.x, cur.y)) gameOver();
+}
+
+function collide(m, x, y) {
+  for (let r = 0; r < m.length; r++)
+    for (let c = 0; c < m[r].length; c++) {
+      if (!m[r][c]) continue;
+      const nx = x + c, ny = y + r;
+      if (nx < 0 || nx >= COLS || ny >= ROWS) return true;
+      if (ny >= 0 && board[ny][nx]) return true;
+    }
+  return false;
+}
+
+function rotate(m, dir) {
+  const n = m.length, res = Array.from({length: n}, () => Array(n).fill(0));
+  for (let r = 0; r < n; r++)
+    for (let c = 0; c < n; c++)
+      if (dir > 0) res[c][n - 1 - r] = m[r][c];
+      else res[n - 1 - c][r] = m[r][c];
+  return res;
+}
+
+function tryRotate(dir) {
+  if (cur.type === 'O') return;
+  const m = rotate(cur.m, dir);
+  const kicks = [[0,0],[-1,0],[1,0],[0,-1],[-2,0],[2,0],[0,-2]];
+  for (const [dx, dy] of kicks) {
+    if (!collide(m, cur.x + dx, cur.y + dy)) {
+      cur.m = m; cur.x += dx; cur.y += dy; return;
+    }
+  }
+}
+
+function move(dx) { if (!collide(cur.m, cur.x + dx, cur.y)) cur.x += dx; }
+
+function softDrop() {
+  if (!collide(cur.m, cur.x, cur.y + 1)) { cur.y++; score += 1; }
+  else lock();
+  dropTimer = 0;
+}
+
+function hardDrop() {
+  let d = 0;
+  while (!collide(cur.m, cur.x, cur.y + 1)) { cur.y++; d++; }
+  score += d * 2;
+  lock();
+  vibrate(15);
+}
+
+function hold() {
+  if (!canHold) return;
+  const t = cur.type;
+  if (holdType) spawn(holdType); else spawn();
+  holdType = t;
+  canHold = false;
+}
+
+function lock() {
+  for (let r = 0; r < cur.m.length; r++)
+    for (let c = 0; c < cur.m[r].length; c++) {
+      if (!cur.m[r][c]) continue;
+      const y = cur.y + r;
+      if (y < 0) { gameOver(); return; }
+      board[y][cur.x + c] = cur.type;
+    }
+  let cleared = 0;
+  for (let r = ROWS - 1; r >= 0; r--) {
+    if (board[r].every(v => v)) {
+      board.splice(r, 1);
+      board.unshift(Array(COLS).fill(null));
+      cleared++; r++;
+    }
+  }
+  if (cleared) {
+    lines += cleared;
+    score += LINE_SCORE[cleared] * level;
+    level = Math.floor(lines / 10) + 1;
+    vibrate(cleared >= 4 ? [30, 40, 30] : 25);
+  }
+  spawn();
+}
+
+function vibrate(p) { if (navigator.vibrate) navigator.vibrate(p); }
+
+function ghostY() {
+  let y = cur.y;
+  while (!collide(cur.m, cur.x, y + 1)) y++;
+  return y;
+}
+
+function dropInterval() { return Math.max(60, 800 - (level - 1) * 70); }
+
+// ---------- 그리기 ----------
+function cell(c, x, y, color, size, alpha = 1) {
+  c.globalAlpha = alpha;
+  c.fillStyle = color;
+  c.fillRect(x * size + 1, y * size + 1, size - 2, size - 2);
+  c.fillStyle = 'rgba(255,255,255,.18)';
+  c.fillRect(x * size + 1, y * size + 1, size - 2, Math.max(2, size / 7));
+  c.globalAlpha = 1;
+}
+
+function drawMini(c, type, oy, boxH) {
+  if (!type) return;
+  const m = SHAPES[type], s = 14;
+  const rows = m.map((r, i) => r.some(v => v) ? i : -1).filter(i => i >= 0);
+  const px = (72 - m[0].length * s) / 2;
+  const py = oy + (boxH - rows.length * s) / 2 - rows[0] * s;
+  c.fillStyle = COLORS[type];
+  for (let r = 0; r < m.length; r++)
+    for (let col = 0; col < m[r].length; col++)
+      if (m[r][col]) c.fillRect(px + col * s + 1, py + r * s + 1, s - 2, s - 2);
+}
+
+function draw() {
+  const W = COLS * SIZE, H = ROWS * SIZE;
+  ctx.clearRect(0, 0, W, H);
+  ctx.strokeStyle = '#1e2340'; ctx.lineWidth = 1;
+  for (let x = 0; x <= COLS; x++) { ctx.beginPath(); ctx.moveTo(x*SIZE, 0); ctx.lineTo(x*SIZE, H); ctx.stroke(); }
+  for (let y = 0; y <= ROWS; y++) { ctx.beginPath(); ctx.moveTo(0, y*SIZE); ctx.lineTo(W, y*SIZE); ctx.stroke(); }
+
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (board[r][c]) cell(ctx, c, r, COLORS[board[r][c]], SIZE);
+
+  if (cur && !over) {
+    const gy = ghostY();
+    for (let r = 0; r < cur.m.length; r++)
+      for (let c = 0; c < cur.m[r].length; c++)
+        if (cur.m[r][c]) {
+          if (gy + r >= 0) cell(ctx, cur.x + c, gy + r, COLORS[cur.type], SIZE, 0.22);
+          if (cur.y + r >= 0) cell(ctx, cur.x + c, cur.y + r, COLORS[cur.type], SIZE);
+        }
+  }
+
+  holdCtx.clearRect(0, 0, 72, 48);
+  holdCtx.globalAlpha = canHold ? 1 : 0.35;
+  drawMini(holdCtx, holdType, 0, 48);
+  holdCtx.globalAlpha = 1;
+
+  nextCtx.clearRect(0, 0, 72, 150);
+  queue.slice(0, 3).forEach((t, i) => drawMini(nextCtx, t, i * 50, 50));
+
+  document.getElementById('score').textContent = score;
+  document.getElementById('lines').textContent = lines;
+  document.getElementById('level').textContent = level;
+}
+
+function loop(t) {
+  const dt = t - lastTime; lastTime = t;
+  if (!paused && !over) {
+    dropTimer += dt;
+    if (dropTimer >= dropInterval()) {
+      dropTimer = 0;
+      if (!collide(cur.m, cur.x, cur.y + 1)) cur.y++;
+      else lock();
+    }
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function start() {
+  board = newBoard(); bag = []; queue = [];
+  for (let i = 0; i < 5; i++) queue.push(nextFromBag());
+  holdType = null; canHold = true;
+  score = 0; lines = 0; level = 1;
+  over = false; paused = false; dropTimer = 0;
+  spawn();
+  overlay.style.display = 'none';
+  if (!running) { running = true; lastTime = performance.now(); requestAnimationFrame(loop); }
+}
+
+function showOverlay(html) {
+  overlay.innerHTML = html;
+  overlay.style.display = 'flex';
+  const b = document.getElementById('startBtn');
+  if (b) b.onclick = start;
+}
+
+function gameOver() {
+  over = true;
+  if (score > best) { best = score; localStorage.setItem('tetris-best', best); }
+  showOverlay(`<h2>게임 오버</h2><p>점수: ${score}</p><p>줄: ${lines}</p><p>최고 점수: ${best}</p>
+    <button class="go" id="startBtn">다시 시작</button>`);
+}
+
+function togglePause() {
+  if (!running || over) return;
+  paused = !paused;
+  if (paused) {
+    overlay.innerHTML = '<h2>일시정지</h2><button class="go" id="resumeBtn">계속하기</button>';
+    overlay.style.display = 'flex';
+    document.getElementById('resumeBtn').onclick = togglePause;
+  } else overlay.style.display = 'none';
+}
+
+function act(a) {
+  if (!running || over || paused) return;
+  switch (a) {
+    case 'left': move(-1); break;
+    case 'right': move(1); break;
+    case 'down': softDrop(); break;
+    case 'rotate': tryRotate(1); break;
+    case 'rotateL': tryRotate(-1); break;
+    case 'drop': hardDrop(); break;
+    case 'hold': hold(); break;
+  }
+}
+
+// ---------- 키보드 ----------
+document.addEventListener('keydown', e => {
+  if (['ArrowLeft','ArrowRight','ArrowDown','ArrowUp','Space'].includes(e.code)) e.preventDefault();
+  if (e.code === 'Enter' && (!running || over)) { start(); return; }
+  if (e.code === 'KeyP') { togglePause(); return; }
+  const map = { ArrowLeft:'left', ArrowRight:'right', ArrowDown:'down', ArrowUp:'rotate', KeyX:'rotate',
+                KeyZ:'rotateL', Space:'drop', KeyC:'hold' };
+  if (map[e.code]) act(map[e.code]);
+});
+
+// ---------- 터치 버튼 (누르고 있으면 반복) ----------
+document.querySelectorAll('.controls button').forEach(btn => {
+  const a = btn.dataset.act;
+  const repeat = ['left', 'right', 'down'].includes(a);
+  let t1, t2;
+  const stop = () => { clearTimeout(t1); clearInterval(t2); btn.classList.remove('active'); };
+  btn.addEventListener('touchstart', e => {
+    e.preventDefault();
+    btn.classList.add('active');
+    act(a);
+    if (repeat) t1 = setTimeout(() => { t2 = setInterval(() => act(a), a === 'down' ? 40 : 70); }, 180);
+  }, { passive: false });
+  btn.addEventListener('touchend', stop);
+  btn.addEventListener('touchcancel', stop);
+  btn.addEventListener('mousedown', () => act(a));
+});
+
+// ---------- 보드 위 제스처 ----------
+let sx, sy, lx, st, moved;
+cvs.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  sx = lx = t.clientX; sy = t.clientY; st = Date.now(); moved = false;
+}, { passive: false });
+cvs.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  const step = SIZE * 0.9;
+  while (t.clientX - lx > step) { act('right'); lx += step; moved = true; }
+  while (lx - t.clientX > step) { act('left'); lx -= step; moved = true; }
+}, { passive: false });
+cvs.addEventListener('touchend', e => {
+  const t = e.changedTouches[0];
+  const dy = t.clientY - sy, dt = Date.now() - st;
+  if (dy > 60 && dy / dt > 0.5 && !moved) act('drop');
+  else if (dy < -60 && !moved) act('hold');
+  else if (!moved && Math.abs(dy) < 15 && dt < 300) act('rotate');
+});
+
+document.getElementById('pauseBtn').onclick = togglePause;
+document.getElementById('startBtn').onclick = start;
+document.addEventListener('visibilitychange', () => { if (document.hidden && running && !over && !paused) togglePause(); });
+document.addEventListener('gesturestart', e => e.preventDefault());
+
+resize();
+board = newBoard(); queue = []; holdType = null; canHold = true; score = 0; lines = 0; level = 1;
+draw();
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
